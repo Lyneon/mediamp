@@ -25,6 +25,7 @@ import org.openani.mediamp.PlaybackException
 import org.openani.mediamp.PlaybackSessionHandle
 import org.openani.mediamp.TransportSnapshot
 import org.openani.mediamp.features.AudioLevelController
+import org.openani.mediamp.features.AudioOnlyMode
 import org.openani.mediamp.features.Buffering
 import org.openani.mediamp.features.NetworkStats
 import org.openani.mediamp.features.FramePreview
@@ -156,6 +157,16 @@ abstract class JvmMpvMediampPlayer(
     private val mediaMetadata = MpvMediaMetadata(handle)
     private val framePreview: FramePreview? = createMpvFramePreview(this, context, parentCoroutineContext)
 
+    /**
+     * The declared video-disabled mode (spec §6). Exposed to platform subclasses because the
+     * render gate must consult it before `loadfile`: without it, platforms whose producer context
+     * needs an attached surface (Windows, Linux) wait for that attach.
+     *
+     * `internal` (not `protected`) because the type is internal: a `protected` property exposing an
+     * internal type is rejected by the compiler.
+     */
+    internal val audioOnlyMode: MpvAudioOnlyMode = MpvAudioOnlyMode(handle) { hasActivePlaybackSession() }
+
     override val features: PlayerFeatures = buildPlayerFeatures {
         add(PlaybackSpeed.Key, machinePlaybackSpeed())
         add(AudioLevelController.Key, audioLevelController)
@@ -164,6 +175,7 @@ abstract class JvmMpvMediampPlayer(
         add(Screenshots.Key, screenshots)
         add(VideoAspectRatio.Key, videoAspectRatio)
         add(MediaMetadata, mediaMetadata)
+        add(AudioOnlyMode.Key, audioOnlyMode)
         framePreview?.let { add(FramePreview.Key, it) }
     }
 
@@ -540,7 +552,7 @@ abstract class JvmMpvMediampPlayer(
                 warned = true
                 MPVLog.warn(
                     handle.ptr,
-                    "mpv loadfile is gated on render backend selection. Ensure you have attached a surface. Waiting indefinitely until a surface is attached (or stop/close)."
+                    "mpv loadfile is gated on render backend selection. Ensure you have attached a surface or enabled AudioOnlyMode feature. Waiting indefinitely until a surface is attached (or stop/close)."
                 )
             }
             renderContextReadySignal.first { it != seen }

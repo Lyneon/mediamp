@@ -19,6 +19,7 @@ import org.openani.mediamp.InternalMediampApi
 import org.openani.mediamp.PlayerState
 import org.openani.mediamp.features.AspectRatioMode
 import org.openani.mediamp.features.AudioLevelController
+import org.openani.mediamp.features.AudioOnlyMode
 import org.openani.mediamp.features.Buffering
 import org.openani.mediamp.features.NetworkStats
 import org.openani.mediamp.features.MediaMetadata
@@ -174,6 +175,41 @@ internal class MpvVideoAspectRatio(private val handle: MPVHandle) : VideoAspectR
             }
         }
         this.mode.value = mode
+    }
+}
+
+/**
+ * The mpv implementation of [AudioOnlyMode]: `vo=null` is the declared video-disabled mode of
+ * spec §6 — video tracks are still decoded, just never displayed. Dropping the video output also
+ * drops the `vo=libmpv` requirement that a render context exists before `loadfile`, which is what
+ * lets `setMediaData` proceed before any surface is attached.
+ */
+@OptIn(InternalForInheritanceMediampApi::class)
+internal class MpvAudioOnlyMode(
+    private val handle: MPVHandle,
+    private val hasActiveSession: () -> Boolean,
+) : AudioOnlyMode {
+    private val _enabled = MutableStateFlow(false)
+    override val enabled: StateFlow<Boolean> = _enabled
+
+    /** The platform value to restore when re-enabling video output; captured on first use. */
+    private var restoreVideoOutput: String? = null
+
+    override fun setEnabled(enabled: Boolean) {
+        check(!hasActiveSession()) {
+            "AudioOnlyMode must be set before the first setMediaData: a player whose file is " +
+                "already loaded cannot swap its renderer (spec §6, vo=libmpv)."
+        }
+        if (_enabled.value == enabled) return
+        if (enabled) {
+            // Capture the backend's own vo (libmpv on desktop/macOS, gpu-next on Android) before
+            // replacing it, so disabling the mode restores exactly what was configured.
+            restoreVideoOutput = restoreVideoOutput ?: handle.getPropertyString("vo")
+            handle.setPropertyString("vo", "null")
+        } else {
+            restoreVideoOutput?.let { handle.setPropertyString("vo", it) }
+        }
+        _enabled.value = enabled
     }
 }
 

@@ -208,7 +208,7 @@ LaunchedEffect(player) {
 }
 Column {
     Button(onClick = {
-        player.features[PlaybackSpeed]?.set(2.0f) // `null` means the platform does not support this feature
+        player.features[PlaybackSpeed.Key]?.set(2.0f) // `null` means the platform does not support this feature
     }) {
         Text("Speed up to 2x")
     }
@@ -216,6 +216,36 @@ Column {
     MediampPlayerSurface(player, Modifier.fillMaxSize())
 }
 ```
+
+#### Audio-only players
+
+A player that never renders video does not need a render surface. On **Windows and Linux** the
+default path waits for one before `loadfile` (the `surface-independent-open` capability is degraded
+there — see `docs/playback-state-v2.md` §6), so an audio-only player must opt in **before its first
+`setMediaData`**:
+
+```kotlin
+val player = MediampPlayer(Unit) // or any other entry point; common factories included
+player.features[AudioOnlyMode.Key]?.setEnabled(true)
+player.setMediaData(audioUri)        // no longer waits for a surface
+```
+
+`AudioOnlyMode` is a *declared video-disabled mode*: video tracks are still decoded, just never
+displayed, and opening no longer requires a render surface. Without it, `setMediaData` called before
+a surface is attached holds the player in `Opening` and logs
+`mpv loadfile is gated on render backend selection…`; that wait ends on `stopPlayback()`/`close()`.
+
+> [!NOTE]
+> `AudioOnlyMode` is provided by the **mpv backend on the JVM family** — desktop (Windows, macOS,
+> Linux) and Android. On every other backend (ExoPlayer, AVPlayer/avkit, web, the test player) and on
+> the iOS mpv backend, `player.features[AudioOnlyMode.Key]` is `null`, so guard the call.
+>
+> It exists because of the **Windows/Linux** gate described above; on macOS and Android it merely
+> disables video output. The iOS mpv backend does not need it — that backend is always audio-only
+> (`vo=null`).
+>
+> On a player with `AudioOnlyMode` enabled, composing `MediampPlayerSurface` is a no-op (and is
+> logged) — the mode renders through no surface at all.
 
 ### Unit Testing
 

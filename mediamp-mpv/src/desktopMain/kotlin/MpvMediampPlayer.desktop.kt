@@ -15,6 +15,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 import org.jetbrains.skia.DirectContext
 import org.jetbrains.skia.Image
 import org.openani.mediamp.InternalMediampApi
+import org.openani.mediamp.features.AudioOnlyMode
 import org.openani.mediamp.mpv.internal.MpvRenderContextHost
 import org.openani.mediamp.mpv.internal.MpvRenderContextLifecycle
 import org.openani.mediamp.mpv.internal.MpvSurfaceBackend
@@ -110,11 +111,30 @@ actual class MpvMediampPlayer(
         !surfaceTeardownStarted && (ringBackend?.destroyRenderContext(handle.ptr) ?: false)
 
     override fun ensureRenderContextForLoad(): Boolean =
-        !surfaceTeardownStarted && (renderContextLifecycle?.ensureReadyForLoad() ?: !supportsSurfaceBackend())
+        !surfaceTeardownStarted && (
+                // Declared video-disabled mode (spec `docs/playback-state-v2.md` §6): no render
+                // context is ever needed, so the open is not gated on a surface attach (this is what
+                // makes audio-only players and load-before-UI work on Windows/Linux).
+                audioOnlyMode.enabled.value ||
+                        (renderContextLifecycle?.ensureReadyForLoad() ?: !supportsSurfaceBackend())
+                )
 
-    /** Returns null until Skiko has chosen its redrawer; loading waits for that selection. */
+    /**
+     * Returns null until Skiko has chosen its redrawer; loading waits for that selection.
+     * Returns null for a player with [AudioOnlyMode] enabled too: that mode should renders
+     * through no surface, so attaching a backend here would contradict it (and needlessly create
+     * a producer context).
+     */
     internal fun createSkiaInterop(layerRedrawer: SkiaLayerRedrawer): SkiaRenderDeviceInterop? {
         if (surfaceTeardownStarted) return null
+        if (audioOnlyMode.enabled.value) {
+            MPVLog.warn(
+                handle.ptr,
+                "a surface was composed for a player with AudioOnlyMode enabled; video output is " +
+                        "disabled, so this surface stays empty.",
+            )
+            return null
+        }
         val backend = currentSurfaceBackend(layerRedrawer) ?: return null
         attachBackend(backend)
         return backend.createSkiaInterop(layerRedrawer)
