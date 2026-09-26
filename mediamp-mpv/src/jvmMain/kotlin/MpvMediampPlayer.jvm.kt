@@ -521,13 +521,28 @@ abstract class JvmMpvMediampPlayer(
         renderContextReadySignal.update { it + 1 }
     }
 
-    /** Receives the physical video surface size from the desktop render backend. */
+    /**
+     * Suspends until the platform reports that the producer render context may exist for
+     * `loadfile` (see [ensureRenderContextForLoad]); the machine stays in Opening while waiting
+     * (spec `docs/playback-state-v2.md` §6, degraded `surface-independent-open`).
+     *
+     * Warns once per open/loadfile when the wait actually starts, so a caller can tell
+     * "still gated on the render backend" apart from "slow I/O".
+     */
     private suspend fun awaitRenderContextForLoad() {
+        var warned = false
         while (true) {
             // Capture the signal before probing so a callback firing between the probe and
             // the wait cannot be missed.
             val seen = renderContextReadySignal.value
             if (ensureRenderContextForLoad()) return
+            if (!warned) {
+                warned = true
+                MPVLog.warn(
+                    handle.ptr,
+                    "mpv loadfile is gated on render backend selection. Ensure you have attached a surface. Waiting indefinitely until a surface is attached (or stop/close)."
+                )
+            }
             renderContextReadySignal.first { it != seen }
         }
     }
